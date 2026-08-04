@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "auth-guard",
+  "description": "Credential leak protection for Claude Code.",
+  "owner": {
+    "name": "ArchitektApx",
+    "email": "architektapx@gehinors.ch",
+    "url": "https://github.com/ArchitektApx"
+  },
+  "plugins": [
+    {
+      "name": "auth-guard",
+      "source": "./",
+      "description": "Credential leak protection for Claude Code sessions. Blocks known secret-printing commands via a PreToolUse hook and redacts secrets from tool output via a betterleaks-backed PostToolUse hook, before they reach the model or the transcript consumer.",
+      "version": "0.1.0",
+      "category": "security",
+      "tags": [
+        "security",
+        "secrets",
+        "credentials",
+        "leak-prevention",
+        "redaction"
+      ],
+      "license": "MIT"
+    }
+  ]
+}

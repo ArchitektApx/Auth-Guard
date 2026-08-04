@@ -1,0 +1,143 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(**/secrets/**)",
+      "Read(**/*.p12)",
+      "Read(**/*.pfx)",
+      "Read(**/.ssh/id_rsa)",
+      "Read(**/.ssh/id_ed25519)",
+      "Read(**/.ssh/id_ecdsa)",
+      "Read(**/.ssh/id_dsa)",
+      "Read(**/.aws/credentials)",
+      "Read(**/.git-credentials)",
+      "Read(**/.netrc)",
+      "Read(**/.npmrc)",
+      "Read(**/.pypirc)",
+      "Read(**/.config/gh/hosts.yml)",
+      "Read(**/.docker/config.json)",
+      "Read(**/.kube/config)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.azure/**)",
+      "Read(~/.gnupg/**)",
+      "Read(~/.cloudflared/**)",
+      "Read(~/.netrc)",
+      "Read(~/.git-credentials)",
+      "Read(~/.npmrc)",
+      "Read(~/.pypirc)",
+      "Read(~/.docker/config.json)",
+      "Read(~/.kube/config)",
+      "Read(~/.config/gh/hosts.yml)",
+      "Read(~/.config/github-copilot/apps.json)",
+      "Read(~/.cli-m365-all-connections.json)",
+      "Read(~/.cli-m365-connection.json)",
+      "Read(~/.cli-m365-msal.json)",
+      "Read(~/.android/adbkey)",
+      "Read(~/.bash_history)",
+      "Read(~/Library/Keychains/**)",
+      "Read(~/Library/Application Support/Firefox/**)",
+      "Read(~/Library/Application Support/Bitwarden/**)",
+      "Bash(git credential:*)",
+      "Bash(gh auth token:*)",
+      "Bash(security find-generic-password:*)",
+      "Bash(security find-internet-password:*)",
+      "Bash(security dump-keychain:*)",
+      "Bash(security export:*)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "credentials": {
+      "files": [
+        {
+          "path": "~/.config/gh/hosts.yml",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.aws/credentials",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.ssh",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.netrc",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.git-credentials",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.npmrc",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.pypirc",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.docker/config.json",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.kube/config",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.cli-m365-all-connections.json",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.cli-m365-connection.json",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.cli-m365-msal.json",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.azure",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.android/adbkey",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.config/github-copilot/apps.json",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.cloudflared",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.gnupg",
+          "mode": "deny"
+        },
+        {
+          "path": "~/.bash_history",
+          "mode": "deny"
+        },
+        {
+          "path": "~/Library/Keychains",
+          "mode": "deny"
+        },
+        {
+          "path": "~/Library/Application Support/Firefox",
+          "mode": "deny"
+        },
+        {
+          "path": "~/Library/Application Support/Bitwarden",
+          "mode": "deny"
+        }
+      ]
+    }
+  }
+}
