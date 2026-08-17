@@ -1,0 +1,127 @@
+name: Verify
+
+# pull_request, never pull_request_target: this checks out and runs code from
+# the PR head, so it must not have write access or secrets.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # A broken manifest breaks install for every user, and there is no staged
+      # rollout to catch it.
+      - name: Validate JSON manifests
+        run: |
+          rc=0
+          for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json hooks/hooks.json config/deny-rules.json; do
+            [ -f "$f" ] || { echo "missing manifest: $f"; rc=1; continue; }
+            jq -e . "$f" >/dev/null || { echo "invalid JSON: $f"; rc=1; }
+          done
+          exit $rc
+
+      # Every plugin listed in the marketplace must ship from this repository.
+      # A remote source would delegate trust to another repo on every install.
+      - name: Marketplace sources are local
+        run: |
+          rc=0
+          while IFS= read -r src; do
+            case "$src" in
+              ./*) ;;
+              *) echo "non-local plugin source in marketplace.json: $src"; rc=1 ;;
+            esac
+          done < <(jq -r '.plugins[].source | if type == "string" then . else tojson end' .claude-plugin/marketplace.json)
+          exit $rc
+
+      - name: Check every skill has frontmatter and a unique name
+        run: |
+          rc=0
+          names=$(mktemp)
+          while IFS= read -r f; do
+            head -n 1 "$f" | grep -qx -- '---' || { echo "missing frontmatter: $f"; rc=1; }
+            grep -qE '^name:' "$f" || { echo "missing name: $f"; rc=1; }
+            grep -qE '^description:' "$f" || { echo "missing description: $f"; rc=1; }
+            sed -n '/^---$/,/^---$/p' "$f" | sed -nE 's/^name:[[:space:]]*//p' >> "$names"
+          done < <(find skills -name SKILL.md)
+          dups=$(sort "$names" | uniq -d)
+          if [ -n "$dups" ]; then echo "duplicate skill names: $dups"; rc=1; fi
+          exit $rc
+
+      # Hooks are commands that run on every installer's machine. Each must
+      # resolve inside the plugin directory via ${CLAUDE_PLUGIN_ROOT}, and the
+      # target must exist and be executable, or the hook silently never runs.
+      - name: Hook commands resolve inside the plugin
+        run: |
+          rc=0
+          while IFS= read -r cmd; do
+            case "$cmd" in
+              '${CLAUDE_PLUGIN_ROOT}/'*) ;;
+              *) echo "hook command does not start with \${CLAUDE_PLUGIN_ROOT}/: $cmd"; rc=1; continue ;;
+            esac
+            rel=${cmd#'${CLAUDE_PLUGIN_ROOT}/'}
+            rel=${rel%% *}
+            case "$rel" in
+              *..*) echo "hook path escapes plugin root: $cmd"; rc=1; continue ;;
+            esac
+            [ -f "$rel" ] || { echo "hook target missing: $rel"; rc=1; continue; }
+            [ -x "$rel" ] || { echo "hook target not executable: $rel"; rc=1; }
+          done < <(jq -r '.hooks[][]?.hooks[]? | select(.type == "command") | .command' hooks/hooks.json)
+          exit $rc
+
+      # Symlinks are never needed and are awkward to audit once redistributed.
+      # Executables are limited to the shell entrypoints the plugin actually
+      # runs; anything else with the executable bit is a red flag.
+      - name: Reject symlinks and unexpected executables
+        run: |
+          rc=0
+          while IFS= read -r entry; do
+            mode=${entry%% *}
+            path=${entry#* }
+            case "$mode" in
+              120000) echo "symlink in distributed content: $path"; rc=1 ;;
+              100755)
+                case "$path" in
+                  hooks/*.sh|bin/*.sh) ;;
+                  *) echo "unexpected executable: $path"; rc=1 ;;
+                esac ;;
+            esac
+          done < <(git ls-files -s | awk '{print $1" "$4}')
+          exit $rc
+
+      - name: No MCP server manifests without review
+        run: |
+          # This plugin declares no MCP servers. If one appears, every entry
+          # must pin its package version; an unpinned `npx -y pkg` resolves to
+          # whatever the registry serves at install time.
+          rc=0
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            echo "MCP manifest present: $f (review before shipping)"
+            if grep -nE 'npx[[:space:]]+(-y[[:space:]]+)?[^@[:space:]"]+"' "$f"; then
+              echo "unpinned npx package in $f"; rc=1
+            fi
+          done < <(git ls-files | grep -E '(^|/)\.?mcp\.json$' || true)
+          exit $rc
+
+      - name: Shell syntax and lint
+        run: |
+          rc=0
+          for f in hooks/*.sh bin/*.sh; do
+            bash -n "$f" || { echo "syntax error: $f"; rc=1; }
+          done
+          shellcheck -S warning hooks/*.sh bin/*.sh || rc=1
+          exit $rc
