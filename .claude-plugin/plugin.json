@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "auth-guard",
   "displayName": "Auth Guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Credential leak protection for Claude Code sessions. A PreToolUse hook blocks known secret-printing commands before they run, and a PostToolUse hook scans every tool output with betterleaks and redacts secrets before they reach the model.",
   "author": {
     "name": "ArchitektApx",
