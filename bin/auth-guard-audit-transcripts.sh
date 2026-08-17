@@ -67,7 +67,7 @@ excluded() { # excluded <path> -> 0 if path matches an exclude substring
 # --- engine: betterleaks ----------------------------------------------------
 
 scan_betterleaks() {
-  local f rel report rules
+  local f report rules
   echo "=== betterleaks scan (decoded transcript strings) ==="
   while IFS= read -r f; do
     excluded "$f" && continue
