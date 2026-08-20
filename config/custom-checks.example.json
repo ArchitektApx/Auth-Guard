@@ -1,0 +1,32 @@
+{
+  "checks": [
+    {
+      "name": "acme-vault-print",
+      "match": "verb",
+      "regex": "(^|[^a-z0-9_-])acme-vault +(print|export) ",
+      "decision": "deny",
+      "message": "'acme-vault print' writes the secret to stdout. Use 'acme-vault status', which masks it."
+    },
+    {
+      "name": "acme-service-account-key",
+      "match": "any",
+      "regex": "acme[-_]service[-_]account.*\\.json",
+      "decision": "ask",
+      "message": "That path is an ACME service-account key. Confirm before its contents go into the transcript."
+    },
+    {
+      "name": "internal-ca-private-key",
+      "match": "any",
+      "regex": "/etc/acme/pki/private/",
+      "decision": "ask"
+    },
+    {
+      "name": "prod-env-marker",
+      "match": "verb",
+      "regex": "ACME_PROD_TOKEN",
+      "decision": "deny",
+      "case_sensitive": true,
+      "message": "The production token variable is never read in a session. Use the staging credential."
+    }
+  ]
+}
