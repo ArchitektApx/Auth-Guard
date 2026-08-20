@@ -419,7 +419,24 @@ load_custom
 [ -n "$cfg_error" ] &&
   decide ask "custom-checks-error" "$cfg_error. Auth-Guard fails closed until the file is fixed or removed: every command a built-in deny does not already block will ask."
 
-custom_pick deny && decide deny "$cwin_name" "$cwin_reason"
+# A custom deny that preempts a built-in ask is reported as such: the user's
+# regex overlaps shipped coverage, which is worth knowing before they judge it
+# wrong or risky. The built-in ask stage runs anyway to find that out.
+if custom_pick deny; then
+  if builtin_ask; then
+    # The notice is a second sentence, so the message in front of it has to end
+    # like one. Neither the fallback text nor a user's `message` is required to
+    # carry terminal punctuation, and without this the two run together into
+    # one unreadable line.
+    case "$cwin_reason" in
+      *[.!?]) ;;
+      *) cwin_reason="$cwin_reason." ;;
+    esac
+    decide deny "$cwin_name overriding $hit_id" \
+      "$cwin_reason Override notice: custom check \"$cwin_name\" took precedence over built-in check $hit_id, which would also have matched (as an ask)."
+  fi
+  decide deny "$cwin_name" "$cwin_reason"
+fi
 
 builtin_ask && decide ask "$hit_id" "$hit_reason"
 
