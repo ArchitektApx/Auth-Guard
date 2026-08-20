@@ -63,7 +63,7 @@ before writing your first check. Any other top-level key is an error.
 
 | Field | Required | Type | Constraint |
 | --- | --- | --- | --- |
-| `name` | yes | string | Non-empty, and unique across the file. It appears in every message the check produces, so make it identify the check to you. |
+| `name` | yes | string | Non-empty, and unique across the file. `custom-checks-error` is reserved by the guard (it is the name a fail-closed decision reports under) and is rejected. The name appears in every message the check produces, so make it identify the check to you. |
 | `match` | yes | string | `"verb"` or `"any"`. See [Match modes](#match-modes). |
 | `regex` | yes | string | Non-empty POSIX extended regular expression (ERE), as `grep -E` accepts it. |
 | `decision` | yes | string | `"deny"` blocks the command, `"ask"` routes it to you for confirmation. |
@@ -184,4 +184,8 @@ it after every edit to this file.
 
 The file is read on every Bash call. It costs one `jq` invocation and a `grep`
 per check, which is negligible against the hook overhead that is already there.
-The guard uses no tools it did not already require, and makes no network calls.
+The guard makes no network calls. Beyond the `jq` and `grep` it already
+required, it now also runs `base64`, which carries each validated field from
+`jq` into the shell intact; it is part of POSIX and present on every system
+that can run the rest of the plugin. If it is ever not working, the guard fails
+closed rather than running with checks that silently decoded to nothing.

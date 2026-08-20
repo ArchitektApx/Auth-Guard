@@ -214,6 +214,12 @@ custom_cases=()
 custom_jq='
 def allowed: ["name","match","regex","decision","message","case_sensitive"];
 def required: ["name","match","regex","decision"];
+
+# The guard reports a fail-closed decision as if it came from a check of this
+# name, and the doctor decides file validity by matching that systemMessage
+# exactly. A user check by the same name would make the doctor call a valid
+# file invalid, so the name belongs to the guard and is refused here.
+def reserved: ["custom-checks-error"];
 def flat: gsub("[\n\r\t]"; " ");
 def b64: if . == "" then "-" else @base64 end;
 
@@ -239,6 +245,11 @@ def entry_errors($i):
             and ((($c.name | type) != "string") or ($c.name == ""))
          then ["checks[" + ($i | tostring)
                + "]: \"name\" must be a non-empty string"] else [] end)
+      + (if ($c | has("name")) and (($c.name | type) == "string")
+            and ((reserved | index($c.name)) != null)
+         then [($c | entry_label($i))
+               + ": \"name\" is reserved by the guard, choose another"]
+         else [] end)
       + (if ($c | has("match")) and ($c.match != "verb") and ($c.match != "any")
          then [($c | entry_label($i)) + ": \"match\" must be \"verb\" or \"any\""]
          else [] end)
@@ -293,19 +304,35 @@ top_errors as $top
   end
 '
 
+# --decode rather than -d: BSD and GNU base64 both accept the long form, while
+# older macOS base64 knows only -D.
+#
+# A field that fails to decode must not simply turn into an empty string. When
+# decoding breaks, every field empties at once, and the field that decides the
+# outcome is `decision`: an empty one equals neither "deny" nor "ask", so
+# custom_pick matches nothing in either stage and the user's checks stop firing
+# without a word. Note that an empty `regex` does the opposite, since an empty
+# ERE matches everything (`printf 'abc' | grep -qE -e ''` exits 0), so a
+# half-decoded file would fire on every command instead. Both are wrong, and
+# CANARY below is what catches either before it can happen.
 b64d() { # b64d <field>
   if [ "$1" = "-" ]; then
     printf ''
   else
-    printf '%s' "$1" | base64 -d 2>/dev/null
+    printf '%s' "$1" | base64 --decode 2>/dev/null
   fi
 }
+
+# "auth-guard" in base64, hard-coded so the probe tests decoding and nothing
+# else.
+CANARY_B64="YXV0aC1ndWFyZA=="
+CANARY_PLAIN="auth-guard"
 
 resolve_custom_file() {
   local candidate
   if [ -n "${AUTH_GUARD_CUSTOM_CHECKS:-}" ]; then
     cfg_file="$AUTH_GUARD_CUSTOM_CHECKS"
-    if [ ! -f "$cfg_file" ]; then
+    if [ ! -f "$cfg_file" ] || [ ! -r "$cfg_file" ]; then
       cfg_error="AUTH_GUARD_CUSTOM_CHECKS names \"$cfg_file\", which is not a readable file"
       cfg_file=""
     fi
@@ -315,8 +342,18 @@ resolve_custom_file() {
   # The probe is the whole rule: the first candidate that exists wins, and a
   # directory that exists but holds no file gates nothing. Finding none is a
   # silent no-op, which is what a user who never opted in must get.
+  #
+  # A candidate that exists but cannot be read is not skipped. Skipping it
+  # would hand the user the next file down, or no file at all, for a file they
+  # did write; and reading it later would surface as "not valid JSON:
+  # Permission denied", which sends them looking for a syntax error that is not
+  # there. It resolves, and it fails closed naming itself.
   while IFS= read -r candidate; do
     if [ -f "$candidate" ]; then
+      if [ ! -r "$candidate" ]; then
+        cfg_error="custom-checks file \"$candidate\" exists but is not readable"
+        return 0
+      fi
       cfg_file="$candidate"
       return 0
     fi
@@ -345,6 +382,18 @@ load_custom() {
   if [ "$st" -ne 0 ]; then
     out=$(printf '%s' "$out" | tr '\n\t' '  ' | tr -s ' ' | cut -c1-200)
     cfg_error="custom-checks file \"$cfg_file\" could not be validated: $out"
+    return 0
+  fi
+
+  # A validated file with at least one check is about to send its fields from
+  # jq into the shell through base64. If decoding is broken, every field comes
+  # back empty and every custom check quietly stops matching: a fail-open of
+  # protection the user wrote themselves. Prove the round trip first, and treat
+  # a failure as a file error like any other. `out` is exactly "OK" when the
+  # checks array is empty, and then there is nothing to decode and nothing to
+  # lose.
+  if [ "$out" != "OK" ] && [ "$(b64d "$CANARY_B64")" != "$CANARY_PLAIN" ]; then
+    cfg_error="custom-checks file \"$cfg_file\" could not be loaded: base64 decoding is not working on this system, so no custom check can be read"
     return 0
   fi
 

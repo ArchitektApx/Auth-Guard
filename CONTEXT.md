@@ -21,7 +21,7 @@ The permission outcome a matching check produces: `deny` blocks the tool call, `
 _Avoid_: action, verdict, severity (severity orders decisions; the decision itself is deny or ask)
 
 **Check id**:
-The short stable identifier of a built-in check (e.g. `gh-token`), named in diagnostic output and in the override notice.
+The short stable identifier of a built-in check (e.g. `gh-auth-token`), named in diagnostic output and in the override notice.
 _Avoid_: rule id, check name (a name belongs to a custom check; an id to a built-in)
 
 **Override notice**:

@@ -108,7 +108,7 @@ if [ -f "$GUARD" ]; then
   shadowed=""
 
   if [ -n "${AUTH_GUARD_CUSTOM_CHECKS:-}" ]; then
-    if [ -f "$AUTH_GUARD_CUSTOM_CHECKS" ]; then
+    if [ -f "$AUTH_GUARD_CUSTOM_CHECKS" ] && [ -r "$AUTH_GUARD_CUSTOM_CHECKS" ]; then
       resolved="$AUTH_GUARD_CUSTOM_CHECKS"
       pass "custom-checks file (AUTH_GUARD_CUSTOM_CHECKS): $resolved"
     else
@@ -116,9 +116,18 @@ if [ -f "$GUARD" ]; then
         "AUTH_GUARD_CUSTOM_CHECKS names $AUTH_GUARD_CUSTOM_CHECKS, which is not a readable file; the guard fails closed on every command"
     fi
   else
-    candidates=0
+    # XDG_CONFIG_HOME is very often exactly $HOME/.config, which makes the
+    # first two candidates the same path. The guard does not care, it takes the
+    # first hit either way, but ranking that list without de-duplicating it
+    # would report a file as shadowing itself and print the same path twice.
+    probed=""
+    seen=""
     while IFS= read -r candidate; do
-      candidates=$((candidates + 1))
+      case "$seen" in
+        *"[$candidate]"*) continue ;;
+      esac
+      seen="${seen}[$candidate]"
+      probed="${probed:+$probed, }$candidate"
       [ -f "$candidate" ] || continue
       if [ -z "$resolved" ]; then
         resolved="$candidate"
@@ -130,7 +139,10 @@ if [ -f "$GUARD" ]; then
     if [ -n "$resolved" ]; then
       pass "custom-checks file resolved: $resolved"
     else
-      pass "no custom-checks file found ($candidates locations probed); built-in checks only"
+      # Naming the chain rather than counting it: this line is what a user who
+      # wants to opt in reads to find out where the file goes, and the first
+      # path listed is the one that would win.
+      pass "no custom-checks file found; probed: $probed; built-in checks only"
     fi
   fi
 
