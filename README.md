@@ -67,6 +67,20 @@ The hooks run with the environment of the Claude Code process, which (especially
 
 After installing, run `/auth-guard:doctor` in a fresh session, then `/auth-guard:global-settings` to apply the settings-side layers.
 
+## Customize: your own checks
+
+The built-in PreToolUse checks are curated here and cannot know your secret stores, your internal CLIs or your company-specific credential paths. Add your own in a JSON file:
+
+```sh
+mkdir -p ~/.config/auth-guard
+# start from the shipped template: config/custom-checks.example.json
+$EDITOR ~/.config/auth-guard/custom-checks.json
+```
+
+Each check has a `name`, a `match` mode (`verb` or `any`), a `regex`, and a `decision` (`deny` or `ask`), plus an optional message and case-sensitivity flag. A deny always beats an ask, whichever side defined it, so a custom check can harden shipped coverage but never weaken it. Any error in the file fails closed and `/auth-guard:doctor` tells you which check is wrong.
+
+The schema, the resolution order, the `AUTH_GUARD_CUSTOM_CHECKS` override and the failure semantics are documented in **[docs/custom-checks.md](docs/custom-checks.md)**.
+
 ## Why so many layers
 
 Claude Code has three separate enforcement domains, and a rule in one does nothing in the others:

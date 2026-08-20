@@ -12,7 +12,7 @@
       "name": "auth-guard",
       "source": "./",
       "description": "Credential leak protection for Claude Code sessions. Blocks known secret-printing commands via a PreToolUse hook and redacts secrets from tool output via a betterleaks-backed PostToolUse hook, before they reach the model or the transcript consumer.",
-      "version": "0.1.1",
+      "version": "0.2.0",
       "category": "security",
       "tags": [
         "security",

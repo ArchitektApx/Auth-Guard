@@ -91,10 +91,13 @@ rejects the merge.
   `audit-transcripts`, `global-settings`; keep new ones unique and specific.
 - `plugin.json` declares no `hooks` field; Claude Code auto-discovers
   `hooks/hooks.json`. Moving or renaming that file disables both hooks.
-- `bin/auth-guard-apply-settings.sh` is the one script that writes outside the
-  plugin directory (`~/.claude/settings.json`, with a timestamped backup, and
-  it sets `sandbox.enabled` to `true`). Its skill gates it behind a dry run and
-  explicit user confirmation; keep that flow.
+- `bin/auth-guard-apply-settings.sh` is the only script that writes anything
+  durable outside the plugin directory (`~/.claude/settings.json`, with a
+  timestamped backup, and it sets `sandbox.enabled` to `true`). Its skill gates
+  it behind a dry run and explicit user confirmation; keep that flow. The one
+  benign exception is `bin/auth-guard-doctor.sh`, whose custom-checks self-test
+  writes a synthetic checks file to `$TMPDIR` and removes it again under a
+  `trap`; keep that file transient and keep the trap.
 - Every script prepends `/opt/homebrew/bin:/usr/local/bin:$HOME/go/bin:$HOME/.local/bin`
   to `PATH` because GUI-launched Claude Code inherits launchd's minimal PATH and
   `jq` and `betterleaks` vanish. Keep the prepend when adding scripts.
@@ -102,3 +105,17 @@ rejects the merge.
   the project directory. Home-directory credential files are covered by the
   `sandbox.credentials.files` entries in the same file, which is why both lists
   exist.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as local markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage labels are used as-is. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` plus `docs/adr/` at the repo root. See `docs/agents/domain.md`.
