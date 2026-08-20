@@ -282,7 +282,19 @@ b64d() { # b64d <field>
   fi
 }
 
+# The candidate list, most preferred first. Printed rather than returned so the
+# doctor can reuse the same order by sourcing nothing and duplicating nothing.
+# An unset or empty XDG_CONFIG_HOME drops its candidate, per the XDG spec.
+custom_candidates() {
+  [ -n "${XDG_CONFIG_HOME:-}" ] &&
+    printf '%s\n' "$XDG_CONFIG_HOME/auth-guard/custom-checks.json"
+  printf '%s\n' "$HOME/.config/auth-guard/custom-checks.json"
+  printf '%s\n' "$HOME/.auth-guard/custom-checks.json"
+  return 0
+}
+
 resolve_custom_file() {
+  local candidate
   if [ -n "${AUTH_GUARD_CUSTOM_CHECKS:-}" ]; then
     cfg_file="$AUTH_GUARD_CUSTOM_CHECKS"
     if [ ! -f "$cfg_file" ]; then
@@ -291,6 +303,16 @@ resolve_custom_file() {
     fi
     return 0
   fi
+
+  # The probe is the whole rule: the first candidate that exists wins, and a
+  # directory that exists but holds no file gates nothing. Finding none is a
+  # silent no-op, which is what a user who never opted in must get.
+  while IFS= read -r candidate; do
+    if [ -f "$candidate" ]; then
+      cfg_file="$candidate"
+      return 0
+    fi
+  done <<<"$(custom_candidates)"
   return 0
 }
 
