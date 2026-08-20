@@ -33,6 +33,25 @@ set -uo pipefail
 # everything. Cover the standard install locations.
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/go/bin:$HOME/.local/bin${PATH:+:$PATH}"
 
+# The custom-checks file candidates, most preferred first, and the one place
+# the resolution order is written down. An unset or empty XDG_CONFIG_HOME drops
+# its candidate, per the XDG spec.
+custom_candidates() {
+  [ -n "${XDG_CONFIG_HOME:-}" ] &&
+    printf '%s\n' "$XDG_CONFIG_HOME/auth-guard/custom-checks.json"
+  printf '%s\n' "$HOME/.config/auth-guard/custom-checks.json"
+  printf '%s\n' "$HOME/.auth-guard/custom-checks.json"
+  return 0
+}
+
+# `--candidates` exists so the doctor can report and rank the same candidates
+# without keeping a second copy of the list that would drift from this one.
+# Claude Code passes no arguments, so the hook path is unaffected.
+if [ "${1:-}" = "--candidates" ]; then
+  custom_candidates
+  exit 0
+fi
+
 input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
 [ -z "$cmd" ] && exit 0
@@ -280,17 +299,6 @@ b64d() { # b64d <field>
   else
     printf '%s' "$1" | base64 -d 2>/dev/null
   fi
-}
-
-# The candidate list, most preferred first. Printed rather than returned so the
-# doctor can reuse the same order by sourcing nothing and duplicating nothing.
-# An unset or empty XDG_CONFIG_HOME drops its candidate, per the XDG spec.
-custom_candidates() {
-  [ -n "${XDG_CONFIG_HOME:-}" ] &&
-    printf '%s\n' "$XDG_CONFIG_HOME/auth-guard/custom-checks.json"
-  printf '%s\n' "$HOME/.config/auth-guard/custom-checks.json"
-  printf '%s\n' "$HOME/.auth-guard/custom-checks.json"
-  return 0
 }
 
 resolve_custom_file() {

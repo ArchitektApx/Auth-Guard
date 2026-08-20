@@ -92,6 +92,100 @@ if [ "$HAVE_BL" = 1 ] && [ -f "$PLUGIN_ROOT/hooks/output-guard.sh" ]; then
                 || fail "output-guard self-test" "clean output was modified"
 fi
 
+# --- custom checks ----------------------------------------------------------
+#
+# Which file the guard would load, whether a second candidate is being
+# shadowed, whether the file is valid, and whether the guard really loads one.
+# Validation is not reimplemented here: the guard is pointed at the file and
+# its own fail-closed reason is relayed, so there is exactly one implementation
+# of the schema and the two can never disagree. Nothing below prints command
+# text or matched text; paths, check names, counts and verdicts only.
+
+GUARD="$PLUGIN_ROOT/hooks/secret-guard.sh"
+
+if [ -f "$GUARD" ]; then
+  resolved=""
+  shadowed=""
+
+  if [ -n "${AUTH_GUARD_CUSTOM_CHECKS:-}" ]; then
+    if [ -f "$AUTH_GUARD_CUSTOM_CHECKS" ]; then
+      resolved="$AUTH_GUARD_CUSTOM_CHECKS"
+      pass "custom-checks file (AUTH_GUARD_CUSTOM_CHECKS): $resolved"
+    else
+      fail "custom-checks file" \
+        "AUTH_GUARD_CUSTOM_CHECKS names $AUTH_GUARD_CUSTOM_CHECKS, which is not a readable file; the guard fails closed on every command"
+    fi
+  else
+    candidates=0
+    while IFS= read -r candidate; do
+      candidates=$((candidates + 1))
+      [ -f "$candidate" ] || continue
+      if [ -z "$resolved" ]; then
+        resolved="$candidate"
+      else
+        shadowed="${shadowed:+$shadowed, }$candidate"
+      fi
+    done <<<"$(bash "$GUARD" --candidates)"
+
+    if [ -n "$resolved" ]; then
+      pass "custom-checks file resolved: $resolved"
+    else
+      pass "no custom-checks file found ($candidates locations probed); built-in checks only"
+    fi
+  fi
+
+  if [ -n "$shadowed" ]; then
+    warn "custom-checks shadowing" \
+      "$resolved wins; these lower-precedence files are never read: $shadowed"
+  fi
+
+  if [ -n "$resolved" ] && [ ! -r "$resolved" ]; then
+    # The relay below points AUTH_GUARD_CUSTOM_CHECKS at the resolved file, so
+    # the guard answers from its override branch and names that variable. For a
+    # file found by probing, the user never set it, and being told about a
+    # variable they have never heard of is the same misdirection the guard's
+    # own candidate wording exists to avoid. Answer this one case directly, in
+    # the guard's words for it.
+    fail "custom-checks file valid" \
+      "custom-checks file \"$resolved\" exists but is not readable; the guard fails closed on every command a built-in deny does not already block"
+  elif [ -n "$resolved" ]; then
+    out=$(printf '{"tool_input":{"command":"auth-guard-doctor-probe"}}' \
+          | AUTH_GUARD_CUSTOM_CHECKS="$resolved" bash "$GUARD" 2>/dev/null)
+    if [ "$(printf '%s' "$out" | jq -r '.systemMessage // empty')" \
+         = "secret-guard: ask (custom-checks-error)" ]; then
+      fail "custom-checks file valid" \
+        "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason')"
+    else
+      n=$(jq -r '.checks | length' "$resolved" 2>/dev/null)
+      pass "custom-checks file valid (checks: ${n:-0})"
+    fi
+  fi
+
+  # End-to-end: a synthetic file through the real guard, asserting the decision
+  # JSON that comes back. Same seam as the redaction self-tests above.
+  #
+  # This is the only thing this script writes outside the plugin directory: one
+  # transient file under $TMPDIR, holding a synthetic check and nothing from
+  # the user's environment. The trap is armed on the line after mktemp and
+  # covers the signals that can arrive before the rm below, so an interrupted
+  # doctor run leaves nothing behind.
+  synth=$(mktemp "${TMPDIR:-/tmp}/auth-guard-selftest.XXXXXX")
+  trap 'rm -f "$synth"' EXIT HUP INT TERM
+  printf '%s\n' '{"checks":[{"name":"auth-guard-selftest","match":"verb","regex":"auth-guard-selftest-trigger","decision":"deny","message":"auth-guard self-test check"}]}' >"$synth"
+  out=$(printf '{"tool_input":{"command":"auth-guard-selftest-trigger --now"}}' \
+        | AUTH_GUARD_CUSTOM_CHECKS="$synth" bash "$GUARD" 2>/dev/null)
+  rm -f "$synth"
+  trap - EXIT HUP INT TERM
+  d=$(printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecision // empty')
+  s=$(printf '%s' "$out" | jq -r '.systemMessage // empty')
+  if [ "$d" = "deny" ] && [ "$s" = "secret-guard: deny (auth-guard-selftest)" ]; then
+    pass "secret-guard loads a custom-checks file end to end"
+  else
+    fail "custom-checks self-test" \
+      "expected deny from check auth-guard-selftest, got '${d:-no output}' / '${s:-no systemMessage}'"
+  fi
+fi
+
 # --- hook registration ------------------------------------------------------
 
 # Hooks may be wired either by this plugin (hooks/hooks.json, when installed
