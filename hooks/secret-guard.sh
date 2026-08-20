@@ -21,6 +21,10 @@
 # guard's observable output (they appear in every systemMessage and in the
 # override notice) and are stable by intent: rename a check's wording freely,
 # but do not rename its id.
+#
+# The user can add custom checks in a JSON file (see docs/custom-checks.md).
+# They are evaluated alongside the built-ins, and any error in that file fails
+# closed: the user never silently loses protection they wrote themselves.
 
 set -uo pipefail
 
@@ -163,9 +167,262 @@ builtin_ask() {
   return 1
 }
 
+# --- custom checks ----------------------------------------------------------
+#
+# Resolution, schema and failure semantics are documented in
+# docs/custom-checks.md. In short: AUTH_GUARD_CUSTOM_CHECKS (when set and
+# non-empty) names the file outright; any error in the file, including a
+# missing override target, fails closed with `ask` on everything a built-in
+# deny does not already stop.
+
+cfg_file=""
+cfg_error=""
+
+custom_count=0
+custom_names=()
+custom_matches=()
+custom_regexes=()
+custom_decisions=()
+custom_messages=()
+custom_cases=()
+
+# Structural validation lives in jq: it reports every schema violation it can
+# see, naming the offending check (by name where the entry has a usable one,
+# by index otherwise). On success it prints OK followed by one line per check,
+# each field base64-encoded so a regex or message containing spaces or
+# newlines survives the trip through the shell intact. An empty field is
+# encoded as "-", which base64 never produces.
+custom_jq='
+def allowed: ["name","match","regex","decision","message","case_sensitive"];
+def required: ["name","match","regex","decision"];
+def flat: gsub("[\n\r\t]"; " ");
+def b64: if . == "" then "-" else @base64 end;
+
+def entry_label($i):    # "label" is a jq keyword, hence the prefix
+  if (type == "object") and has("name")
+     and ((.name | type) == "string") and (.name != "")
+  then "check \"" + (.name | flat) + "\""
+  else "checks[" + ($i | tostring) + "]"
+  end;
+
+def entry_errors($i):
+  . as $c
+  | if type != "object"
+    then ["checks[" + ($i | tostring) + "]: entry is not a JSON object"]
+    else
+      ([ keys_unsorted[]
+         | select((. as $k | allowed | index($k)) == null)
+         | ($c | entry_label($i)) + ": unknown key \"" + flat + "\"" ])
+      + ([ required[] as $k
+           | select(($c | has($k)) | not)
+           | ($c | entry_label($i)) + ": missing required key \"" + $k + "\"" ])
+      + (if ($c | has("name"))
+            and ((($c.name | type) != "string") or ($c.name == ""))
+         then ["checks[" + ($i | tostring)
+               + "]: \"name\" must be a non-empty string"] else [] end)
+      + (if ($c | has("match")) and ($c.match != "verb") and ($c.match != "any")
+         then [($c | entry_label($i)) + ": \"match\" must be \"verb\" or \"any\""]
+         else [] end)
+      + (if ($c | has("regex"))
+            and ((($c.regex | type) != "string") or ($c.regex == ""))
+         then [($c | entry_label($i)) + ": \"regex\" must be a non-empty string"]
+         else [] end)
+      + (if ($c | has("decision"))
+            and ($c.decision != "deny") and ($c.decision != "ask")
+         then [($c | entry_label($i)) + ": \"decision\" must be \"deny\" or \"ask\""]
+         else [] end)
+      + (if ($c | has("message")) and (($c.message | type) != "string")
+         then [($c | entry_label($i)) + ": \"message\" must be a string"] else [] end)
+      + (if ($c | has("case_sensitive"))
+            and (($c.case_sensitive | type) != "boolean")
+         then [($c | entry_label($i)) + ": \"case_sensitive\" must be true or false"]
+         else [] end)
+    end;
+
+def top_errors:
+  if type != "object" then ["top-level value is not a JSON object"]
+  elif (has("checks") | not)
+  then ["top-level object is missing the \"checks\" key"]
+  elif (keys_unsorted | length) != 1
+  then ["top-level object has unknown key(s): "
+        + ([keys_unsorted[] | select(. != "checks") | flat] | join(", "))]
+  elif (.checks | type) != "array" then ["\"checks\" must be an array"]
+  else [] end;
+
+def dup_errors:
+  [ .checks[]? | select(type == "object") | .name
+    | select((type == "string") and (. != "")) ]
+  | group_by(.) | map(select(length > 1) | .[0])
+  | map("duplicate check name \"" + flat + "\"");
+
+top_errors as $top
+| if ($top | length) > 0 then "ERR " + ($top | join("; "))
+  else
+    (([ .checks | to_entries[] | .key as $i | .value | entry_errors($i) ]
+      | add) // []) as $entry
+    | dup_errors as $dups
+    | ($entry + $dups) as $errs
+    | if ($errs | length) > 0 then "ERR " + ($errs | join("; "))
+      else
+        ("OK",
+         (.checks[]
+          | [ (.name | b64), (.match | b64), (.regex | b64), (.decision | b64),
+              ((.message // "") | b64),
+              (((.case_sensitive // false) | tostring) | b64) ]
+          | join(" ")))
+      end
+  end
+'
+
+b64d() { # b64d <field>
+  if [ "$1" = "-" ]; then
+    printf ''
+  else
+    printf '%s' "$1" | base64 -d 2>/dev/null
+  fi
+}
+
+resolve_custom_file() {
+  if [ -n "${AUTH_GUARD_CUSTOM_CHECKS:-}" ]; then
+    cfg_file="$AUTH_GUARD_CUSTOM_CHECKS"
+    if [ ! -f "$cfg_file" ]; then
+      cfg_error="AUTH_GUARD_CUSTOM_CHECKS names \"$cfg_file\", which is not a readable file"
+      cfg_file=""
+    fi
+    return 0
+  fi
+  return 0
+}
+
+load_custom() {
+  [ -n "$cfg_error" ] && return 0
+  [ -z "$cfg_file" ] && return 0
+
+  local out st line first f1 f2 f3 f4 f5 f6 i
+
+  # Parse and validate in two steps, so a syntax error in the file and an
+  # internal error in the validator can never be reported as each other.
+  out=$(jq empty "$cfg_file" 2>&1 >/dev/null)
+  st=$?
+  if [ "$st" -ne 0 ]; then
+    out=$(printf '%s' "$out" | tr '\n\t' '  ' | tr -s ' ' | cut -c1-200)
+    cfg_error="custom-checks file \"$cfg_file\" is not valid JSON: $out"
+    return 0
+  fi
+
+  out=$(jq -r "$custom_jq" "$cfg_file" 2>&1)
+  st=$?
+  if [ "$st" -ne 0 ]; then
+    out=$(printf '%s' "$out" | tr '\n\t' '  ' | tr -s ' ' | cut -c1-200)
+    cfg_error="custom-checks file \"$cfg_file\" could not be validated: $out"
+    return 0
+  fi
+
+  first=1
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    if [ "$first" = 1 ]; then
+      first=0
+      case "$line" in
+        OK) continue ;;
+        "ERR "*)
+          cfg_error="custom-checks file \"$cfg_file\" is invalid: ${line#ERR }"
+          return 0 ;;
+        *)
+          cfg_error="custom-checks file \"$cfg_file\" could not be validated"
+          return 0 ;;
+      esac
+    fi
+    IFS=' ' read -r f1 f2 f3 f4 f5 f6 <<<"$line"
+    custom_names[$custom_count]=$(b64d "$f1")
+    custom_matches[$custom_count]=$(b64d "$f2")
+    custom_regexes[$custom_count]=$(b64d "$f3")
+    custom_decisions[$custom_count]=$(b64d "$f4")
+    custom_messages[$custom_count]=$(b64d "$f5")
+    custom_cases[$custom_count]=$(b64d "$f6")
+    custom_count=$((custom_count + 1))
+  done <<<"$out"
+
+  # grep is the arbiter of what a regex is, so ask it rather than reimplement
+  # POSIX ERE. Patterns go through -e here exactly as they do when matching,
+  # so a regex starting with "-" is data in both places and the two agree.
+  i=0
+  while [ "$i" -lt "$custom_count" ]; do
+    printf '' | grep -qE -e "${custom_regexes[$i]}" >/dev/null 2>&1
+    st=$?
+    if [ "$st" -gt 1 ]; then
+      cfg_error="custom-checks file \"$cfg_file\" is invalid: check \"${custom_names[$i]}\": \"regex\" is not an extended regular expression grep -E accepts"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 0
+}
+
+custom_match() { # custom_match <index>
+  local subject
+  if [ "${custom_matches[$1]}" = "verb" ]; then
+    subject="$bare"
+  else
+    subject="$full"
+  fi
+  if [ "${custom_cases[$1]}" = "true" ]; then
+    printf '%s' "$subject" | grep -qE -e "${custom_regexes[$1]}"
+  else
+    printf '%s' "$subject" | grep -qEi -e "${custom_regexes[$1]}"
+  fi
+}
+
+# The winning custom check of one decision, with every other match of that
+# same decision appended to the reason. All custom checks are evaluated, so a
+# deny is never hidden by an ask that happens to sit earlier in the file.
+cwin_name=""
+cwin_reason=""
+
+custom_pick() { # custom_pick <deny|ask>
+  local want="$1" i winner also
+  winner=-1
+  also=""
+  i=0
+  while [ "$i" -lt "$custom_count" ]; do
+    if [ "${custom_decisions[$i]}" = "$want" ] && custom_match "$i"; then
+      if [ "$winner" -lt 0 ]; then
+        winner=$i
+      else
+        also="${also:+$also, }${custom_names[$i]}"
+      fi
+    fi
+    i=$((i + 1))
+  done
+  [ "$winner" -lt 0 ] && return 1
+
+  cwin_name="${custom_names[$winner]}"
+  cwin_reason="${custom_messages[$winner]}"
+  [ -z "$cwin_reason" ] &&
+    cwin_reason="decision $want defined by custom-check $cwin_name"
+  [ -n "$also" ] && cwin_reason="$cwin_reason (also matched: $also)"
+  return 0
+}
+
 # --- evaluation -------------------------------------------------------------
+#
+# Built-in denies, then custom denies, then built-in asks, then custom asks. A
+# deny is therefore never shadowed by an ask from either side, and built-ins
+# win ties. Custom-check validation sits after the built-in deny stage on
+# purpose: a broken file must not weaken a shipped hard wall.
 
 builtin_deny && decide deny "$hit_id" "$hit_reason"
+
+resolve_custom_file
+load_custom
+
+[ -n "$cfg_error" ] &&
+  decide ask "custom-checks-error" "$cfg_error. Auth-Guard fails closed until the file is fixed or removed: every command a built-in deny does not already block will ask."
+
+custom_pick deny && decide deny "$cwin_name" "$cwin_reason"
+
 builtin_ask && decide ask "$hit_id" "$hit_reason"
+
+custom_pick ask && decide ask "$cwin_name" "$cwin_reason"
 
 exit 0
