@@ -2,27 +2,26 @@
 
 Credential leak protection for [Claude Code](https://code.claude.com). Auth Guard keeps secrets out of your session transcripts with layered prevention, and finds the ones that got there anyway.
 
-> [!WARNING]
-> This is a **work in progress** based on my experience and observations with Claude Code.
-> It is not yet (battle) tested and may not work as expected.
-> A guard that fails silently can be worse than no guard, because it changes what you dare to do.
-> Use at your own risk and verify the layers yourself (`/auth-guard:doctor` is a start, not a proof).
-> Feedback is welcome. Please report any issues you encounter.
 
 ## What you get
 
 **Two hooks**
 
-- `secret-guard.sh` (PreToolUse, Bash): blocks or questions commands whose purpose is to print credentials (`git credential fill`, `gh auth token`, `security find-generic-password`, vault/password-manager reads, credential file access), with whitespace/quote normalization so trivial respellings do not slip past. Low-confidence matches `ask` instead of deny, so you stay in the loop.
-- `output-guard.sh` (PostToolUse, Bash/Read/Grep/WebFetch): scans every tool output with [betterleaks](https://github.com/betterleaks/betterleaks) and rewrites it before the model sees it, replacing each finding with `[REDACTED:<rule-id>]`. This is the layer that catches the unanticipated route: secrets inside API responses, config dumps, logs, or files that no denylist modeled. Fails closed (output withheld) on scanner errors; fails open with a visible warning only when betterleaks is not installed at all.
+- [`secret-guard.sh`](hooks/secret-guard.sh) (PreToolUse, Bash): blocks or questions commands whose purpose is to print credentials (`git credential fill`, `gh auth token`, `security find-generic-password`, vault/password-manager reads, credential file access), with whitespace/quote normalization so trivial respellings do not slip past. Low-confidence matches `ask` instead of deny, so you stay in the loop.
+
+  ![A Claude Code session: the guard denies `gh auth token` outright, then asks for confirmation before `eval $(ssh-agent -s)`](docs/assets/deny-ask.gif)
+
+- [`output-guard.sh`](hooks/output-guard.sh) (PostToolUse, Bash/Read/Grep/WebFetch): scans every tool output with [betterleaks](https://github.com/betterleaks/betterleaks) and rewrites it before the model sees it, replacing each finding with `[REDACTED:<rule-id>]`. This is the layer that catches the unanticipated route: secrets inside API responses, config dumps, logs, or files that no denylist modeled. Fails closed (output withheld) on scanner errors; fails open with a visible warning only when betterleaks is not installed at all.
+
+  ![A Claude Code session: a local CLI prints a GitHub token, and the tool output reaches the model as `token=[REDACTED:github-pat]`](docs/assets/redact.gif)
 
 **Three skills**
 
 | Skill | What it does |
 | --- | --- |
-| `/auth-guard:doctor` | Verifies every layer: dependencies, hook presence and registration, sandbox and deny-rule settings, plus live self-tests of both hooks with a synthetic token. |
-| `/auth-guard:global-settings` | Merges the bundled deny rules (`config/deny-rules.json`) into your `~/.claude/settings.json`. Additive and idempotent: dry-run first, timestamped backup, never removes or reorders your entries. |
-| `/auth-guard:audit-transcripts` | Scans all stored session transcripts with betterleaks (regex fallback without it) and reports file paths and rule ids, never the matched text. |
+| [`/auth-guard:doctor`](skills/doctor/SKILL.md) | Verifies every layer: dependencies, hook presence and registration, sandbox and deny-rule settings, plus live self-tests of both hooks with a synthetic token. |
+| [`/auth-guard:global-settings`](skills/global-settings/SKILL.md) | Merges the bundled deny rules (`config/deny-rules.json`) into your `~/.claude/settings.json`. Additive and idempotent: dry-run first, timestamped backup, never removes or reorders your entries. |
+| [`/auth-guard:audit-transcripts`](skills/audit-transcripts/SKILL.md) | Scans all stored session transcripts with betterleaks (regex fallback without it) and reports file paths and rule ids, never the matched text. |
 
 **A deny-rule baseline** (`config/deny-rules.json`): `Read()`/`Bash()` permission denies plus `sandbox.credentials.files` entries for common credential stores (SSH, AWS, Azure, gcloud-style caches, gh, docker, kube, gnupg, browser profiles, shell history, and more). Some entries are opinionated; denying `~/.azure` breaks `az` inside sessions, for example. Delete what does not fit after applying.
 
@@ -77,7 +76,7 @@ mkdir -p ~/.config/auth-guard
 $EDITOR ~/.config/auth-guard/custom-checks.json
 ```
 
-Each check has a `name`, a `match` mode (`verb` or `any`), a `regex`, and a `decision` (`deny` or `ask`), plus an optional message and case-sensitivity flag. A deny always beats an ask, whichever side defined it, so a custom check can harden shipped coverage but never weaken it. Any error in the file fails closed and `/auth-guard:doctor` tells you which check is wrong.
+A deny always beats an ask, whichever side defined it, so a custom check can harden shipped coverage but never weaken it. Any error in the file fails closed and `/auth-guard:doctor` tells you which check is wrong.
 
 The schema, the resolution order, the `AUTH_GUARD_CUSTOM_CHECKS` override and the failure semantics are documented in **[docs/custom-checks.md](docs/custom-checks.md)**.
 

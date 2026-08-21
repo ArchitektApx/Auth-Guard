@@ -70,8 +70,8 @@ before writing your first check. Any other top-level key is an error.
 | `message` | no | string | The reason shown when the check fires. Defaults to `decision <decision> defined by custom-check <name>`. |
 | `case_sensitive` | no | boolean | Defaults to `false`, matching the built-ins. Set `true` when case carries meaning, for example an environment variable name. |
 
-Unknown keys, at either level, are an error rather than something ignored: a
-misspelled key would otherwise silently drop the constraint you meant to write.
+Unknown keys, at either level, are an error: a misspelled key would otherwise
+silently drop the constraint you meant to write.
 
 Regexes are passed to `grep` via `-e`, both when matching and when validating,
 so a regex that begins with `-` is treated as data rather than as an option,
@@ -184,8 +184,8 @@ it after every edit to this file.
 
 The file is read on every Bash call. It costs one `jq` invocation and a `grep`
 per check, which is negligible against the hook overhead that is already there.
-The guard makes no network calls. Beyond the `jq` and `grep` it already
-required, it now also runs `base64`, which carries each validated field from
-`jq` into the shell intact; it is part of POSIX and present on every system
-that can run the rest of the plugin. If it is ever not working, the guard fails
+The guard makes no network calls. Besides `jq` and `grep` it runs one more
+tool, `base64`, which carries each validated field from `jq` into the shell
+intact; it is part of POSIX and present on every system that can run the rest
+of the plugin. If it is ever not working, the guard fails
 closed rather than running with checks that silently decoded to nothing.
